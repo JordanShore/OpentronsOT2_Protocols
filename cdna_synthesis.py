@@ -1,6 +1,13 @@
+
 from opentrons import protocol_api
 import time
 
+# opentrons_simulate.exe cDNA_synthesis.py
+# opentrons_execute cDNA_synthesis.py
+# CD C:\OpenTronesProtocols\Jordan
+# scp -i Ot2sshKey C:\OpenTronesProtocols\Jordan\cDNA_synthesis.py root@169.254.168.129:
+# J@$0nRule$
+# ssh -i Ot2sshKey root@169.254.168.129
 #------------------------------------------------------------------------------------------------------------------------------------------------------------
 #metadata is essential, apiLevel must be 2.13
 metadata = {
@@ -17,26 +24,7 @@ metadata = {
 #protocol can be imagined to be Jason doing something.
 def run(protocol: protocol_api.ProtocolContext):
 
-#First Code Block Loads all labware.
-    thermo = protocol.load_module('Thermocycler Module')
-    plateTC = thermo.load_labware('nest_96_wellplate_100ul_pcr_full_skirt')
-    plateTC.set_offset(x=-0.20, y=0.30, z=0.00)
-    tipsL2 = protocol.load_labware('opentrons_96_tiprack_300ul', 2)
-    tipsS1 = protocol.load_labware('opentrons_96_tiprack_20ul', 1)
-    tipsS4 = protocol.load_labware('opentrons_96_tiprack_20ul', 4)
-    conicals = protocol.load_labware('opentrons_10_tuberack_falcon_4x50ml_6x15ml_conical', 3)
-    conicals.set_offset(x=-0.20, y=0.90, z=0.00)
-    tubes = protocol.load_labware('opentrons_24_tuberack_nest_1.5ml_screwcap',6)
-    tubes.set_offset(x=0.20, y=0.90, z=-0.10)
-    rnaPlate = protocol.load_labware('corning_96_wellplate_360ul_flat', 9)
-    rnaPlate.set_offset(x=-0.20, y=0.60, z=0.00)
-    distributePlate = protocol.load_labware('corning_96_wellplate_360ul_flat', 5)
-    distributePlate.set_offset(x=-0.20, y=0.60, z=0.00)
-    right_pipette = protocol.load_instrument('p300_single_gen2', 'right', tip_racks=[tipsL2])
-    left_pipette = protocol.load_instrument('p20_multi_gen2', 'left', tip_racks=[tipsS1, tipsS4])
-
 #Custom function definitions.
-
 #round_up returns the next highest multiple after number.
 #Ex. 24 is the next highest multiple of 8 after 20. Therefore round_up(8,20) returns 24.
     def round_up(number,multiple):
@@ -68,7 +56,7 @@ def run(protocol: protocol_api.ProtocolContext):
         wellList = []
         plateMap = []
         rows = rowLetters[:labwareRows]
-        for c in range(1,labwareRows+1):
+        for c in range(1,labwareColumns+1):
             for r in rows:
                 plateMap.append(r+str(c))
         for w in range(0,wellCount):
@@ -116,6 +104,222 @@ def run(protocol: protocol_api.ProtocolContext):
             left_pipette.aspirate(vol, rate = (speed/7.6))
             left_pipette.dispense(vol, rate = (speed/7.6))
 
+#Max Clearance = 90mm
+#75/40 is 75mm/40ml, the height per volume conversion factor. This means,
+# 1ml has a height of 1.875mm in the 50ml Conical.
+    def recalibrate_conical(currentClearance,lastVol,conicalSize):
+        if conicalSize == 50:
+            heightScalar = (75/40) / 1000
+        elif conicalSize == 15:
+            heightScalar = (75/12) / 1000
+        else:
+            print("Error Invalid Conical Size")
+
+        lastHeight = lastVol * heightScalar
+        clearance = currentClearance - lastHeight
+
+        if (clearance <= 2):
+            clearance = 2
+        return clearance
+
+#Calibrates a plate or tubes in a given slot.
+#'Left' or 'Right' must be input for the pipette. Calibrate for 'Left' if both are used.
+#Returns 3 values for axes offsets.
+    def calibrate(labware, pipetteObject):
+        vertical = 0
+        horizontal = 0
+        updown = 0
+        currAdjust = "xx"
+        labware.set_offset(x=horizontal, y=vertical, z=updown)
+        
+        pipette = pipetteObject   
+        pipette.pick_up_tip()
+        pipette.move_to(labware["A1"].bottom(updown))
+        
+        print("a/d for x axis, w/s for y axis, p/l for z axis.")
+        print("Ex. Enter 'ww' for large adjustment, 'w' for small adjustment, 'cus' for custom adjustment.")
+        print("Enter 'q' when done calibrating./n")
+        while currAdjust != "q":
+            currAdjust = input("q to quit. Input Next Adjustment:")
+            
+            if currAdjust == 'q':
+                break
+            
+            elif currAdjust == 'a':
+                horizontal -= .1
+            elif currAdjust == 'aa':
+                horizontal -= 1 
+            elif currAdjust == 'd':
+                horizontal += .1
+            elif currAdjust == 'dd':
+                horizontal += 1
+
+            elif currAdjust == 'w':
+                vertical += .1
+            elif currAdjust == 'ww':
+                vertical += 1
+            elif currAdjust == 's':
+                vertical -= .1 
+            elif currAdjust == 'ss':
+                vertical -= 1
+
+            elif currAdjust == 'p':
+                updown += .1
+            elif currAdjust == 'pp':
+                updown += 1 
+            elif currAdjust == 'l':
+                updown -= .1
+            elif currAdjust == 'll':
+                updown -= 1
+
+            elif currAdjust == 'cus':
+                print("\nCustom adjustment: Choose an axis then amount +- movement.")
+                print("Ex. 'x' ; '-.035' ; or 'z' ; '+5' ; \n")
+                print("WARNING!! Do not enter values >10 or the robot may break!!")
+                axis = input("Enter an axis: 'x' , 'y' , 'z' :")
+                if axis == 'x':
+                    try:
+                        horizontal += float(input("Enter a +- value in mm to adjust:"))
+                    except:
+                        print("Error Invalid Custom Adjustment!")
+                elif axis == 'y':
+                    try:
+                        vertical += float(input("Enter a +- value in mm to adjust:"))
+                    except:
+                        print("Error Invalid Custom Adjustment!")
+                elif axis == 'z':
+                    try:
+                        updown += float(input("Enter a +- value in mm to adjust:"))
+                    except:
+                        print("Error Invalid Custom Adjustment!")
+                else:
+                    print("Error Invalid Axis Input for Custom Adjustment!")
+              
+            else:
+                print("Error, invalid input for base adjustment!")
+                
+            labware.set_offset(x=horizontal, y=vertical, z=updown)
+            pipette.move_to(labware["A1"].bottom(updown))
+
+        print("Offsets are x="+str(horizontal)+", y="+str(vertical)+", z="+str(updown))
+        pipette.drop_tip()
+        
+        return horizontal, vertical, updown
+
+    #Calibrates thermocycler plate. Calibrate for Left if using both pipettes."
+    def calibrate_tc(plateObject, pipetteObject):
+        vertical = 0
+        horizontal = 0
+        updown = 0
+        currAdjust = "xx"
+        plateTC = plateObject
+        plateTC.set_offset(x=horizontal, y=vertical, z=updown)
+        
+        pipette = pipetteObject   
+        pipette.pick_up_tip()
+        pipette.move_to(plateTC["A1"].bottom(updown))
+        
+        print("a/d for x axis, w/s for y axis, p/l for z axis.")
+        print("Ex. Enter 'ww' for large adjustment, 'w' for small adjustment, 'cus' for custom adjustment.")
+        print("Enter 'q' when done calibrating./n")
+        while currAdjust != "q":
+            currAdjust = input("q to quit. Input Next Adjustment:")
+
+            if currAdjust == 'q':
+                break
+            
+            elif currAdjust == 'a':
+                horizontal -= .1
+            elif currAdjust == 'aa':
+                horizontal -= 1
+            elif currAdjust == 'd':
+                horizontal += .1
+            elif currAdjust == 'dd':
+                horizontal += 1
+                
+            elif currAdjust == 'w':
+                vertical += .1
+            elif currAdjust == 'ww':
+                vertical += 1
+            elif currAdjust == 's':
+                vertical -= .1 
+            elif currAdjust == 'ss':
+                vertical -= 1
+
+            elif currAdjust == 'p':
+                updown += .1
+            elif currAdjust == 'pp':
+                updown += 1 
+            elif currAdjust == 'l':
+                updown -= .1
+            elif currAdjust == 'll':
+                updown -= 1
+
+            elif currAdjust == 'cus':
+                print("\nCustom adjustment: Choose an axis then amount +- movement.")
+                print("Ex. 'x' ; '-.035' ; or 'z' ; '+5' ; \n")
+                print("WARNING!! Do not enter values >10 or the robot may break!!")
+                axis = input("Enter an axis: 'x' , 'y' , 'z' :")
+                if axis == 'x':
+                    try:
+                        horizontal += float(input("Enter a +- value in mm to adjust:"))
+                    except:
+                        print("Error Invalid Custom Adjustment!")
+                elif axis == 'y':
+                    try:
+                        vertical += float(input("Enter a +- value in mm to adjust:"))
+                    except:
+                        print("Error Invalid Custom Adjustment!")
+                elif axis == 'z':
+                    try:
+                        updown += float(input("Enter a +- value in mm to adjust:"))
+                    except:
+                        print("Error Invalid Custom Adjustment!")
+                else:
+                    print("Error Invalid Axis Input for Custom Adjustment!")
+            
+            else:
+                print("Error, invalid input for base adjustment!")
+                
+            plateTC.set_offset(x=horizontal, y=vertical, z=updown)
+            pipette.move_to(plateTC["A1"].bottom(updown))
+
+        print("Offsets are x="+str(horizontal)+", y="+str(vertical)+", z="+str(updown))
+        pipette.drop_tip()
+        
+        return horizontal, vertical, updown
+    
+    '''
+    def adjust_bottom(currentPlace, currentZ, pipetteObject):
+        updown = currentZ
+        currAdjust = "xx"
+        pipette = pipetteObject
+        pipette.pick_up_tip()
+        pipette.move_to(currentPlace)
+
+        print("Enter 'pp' for large adjustment, 'p' for small adjustment.")
+        while currAdjust != "q":
+            currAdjust = input("q to quit. Input Next Adjustment:")
+            if currAdjust == 'q':
+                break
+            elif currAdjust == 'p':
+                updown += .1
+            elif currAdjust == 'pp':
+                updown += 1 
+            elif currAdjust == 'l':
+                updown -= .1
+            elif currAdjust == 'll':
+                updown -= 1
+            else:
+                print("Error, invalid input.")
+            
+            pipette.move_to(currentPlace.bottom(updown))
+        
+        pipette.drop_tip()
+
+        return updown
+    '''
+    
 #change_speed changes the speed of movement of the gantry arm to a percentage of normal speed.
 #It takes 1 parameter, the percentage of normal speed to move at.
 #!!DO NOT USE 25% SPEED!!, 25% speed will cause a major malfunction.
@@ -128,16 +332,37 @@ def run(protocol: protocol_api.ProtocolContext):
 #It takes 0 parameters.
     def reset_defaults():
         change_speed(100)
-        right_pipette.well_bottom_clearance.dispense = 1
-        right_pipette.well_bottom_clearance.aspirate = 1
-        left_pipette.well_bottom_clearance.aspirate = 1
-        left_pipette.well_bottom_clearance.dispense = 1
+        right_pipette.well_bottom_clearance.dispense = 0
+        right_pipette.well_bottom_clearance.aspirate = 0
+        left_pipette.well_bottom_clearance.aspirate = 0
+        left_pipette.well_bottom_clearance.dispense = 0
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------        
+#First Code Block Loads and Calibrates all labware.
+    thermo = protocol.load_module('Thermocycler Module')
+    tipsL2 = protocol.load_labware('opentrons_96_tiprack_300ul', 2)
+    tipsS1 = protocol.load_labware('opentrons_96_tiprack_20ul', 1)
+    tipsS4 = protocol.load_labware('opentrons_96_tiprack_20ul', 4)
+    right_pipette = protocol.load_instrument('p300_single_gen2', 'right', tip_racks=[tipsL2])
+    left_pipette = protocol.load_instrument('p20_multi_gen2', 'left', tip_racks=[tipsS1, tipsS4])
+    plateTC = thermo.load_labware('nest_96_wellplate_100ul_pcr_full_skirt')
+    conicals = protocol.load_labware('opentrons_10_tuberack_falcon_4x50ml_6x15ml_conical', 3)
+    tubes = protocol.load_labware('opentrons_24_tuberack_nest_1.5ml_screwcap',6)
+    rnaPlate = protocol.load_labware('nest_96_wellplate_100ul_pcr_full_skirt', 9)
+    distributePlate = protocol.load_labware('nest_96_wellplate_100ul_pcr_full_skirt', 5)
+
+    plateTC.set_offset(-0.3,0.8,0.3)
+    rnaPlate.set_offset(-0.3,0.8,0.3)
+    distributePlate.set_offset(-0.3,0.8,0.3)
+    tubes.set_offset(0.2,0.3,0.46)
+    conicals.set_offset(-0.3,0.5,0.16)
+    
 #To access a specific well, enter a string as a dictionary key, ie. plate["B7"].
 #Or index using and integer by using .wells(), ie. plate.wells()[22]
-#This also works for columns and rows, ie. plate.columns(1)
+#This also works for columns and rows, ie. plate.columns(1)def
+
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #Inputs for protocol.
-
     print("----------------------------------------------------------------------------------------!User Inputs!----------------------------------------------------------------------------------------")
 #Protocol Intro
     print("This protocol will synthesize cDNA using the SSIII kit.")
@@ -146,7 +371,7 @@ def run(protocol: protocol_api.ProtocolContext):
     print("Start of Basic Setup:")
 #Sample Count
     print("Due to pipette dead volumes, It is recommended that you synthesize cDNA for no more than 42 samples for a 50 reaction kit.")
-    samples = int(input("User, how many samples of cDNA would you like to make? (How many wells of your starting RNA plate are filled?)"))
+    samples = int(input("User, how many samples of cDNA would you like to make?"))
     print("\n----\n")
 #Standard Curve Count
     print("Standard Curve dilutions will be 2 fold; Each step after the first will be half water and half liquid from the previous well.")
@@ -176,6 +401,31 @@ def run(protocol: protocol_api.ProtocolContext):
                 stCurvePortion = 3.5
         else:
             stCurvePortion = int(stCurvePortion)
+#Asking user if they would like to do custom calibration.
+        print("------------------------------------------------------------------------------------------!!Calibration!!--------------------------------------------------------------------------------------")
+        print("User, would you like to calibrate labware?")
+        nowCalibrating = input("Enter y/n:")
+        if nowCalibrating == "y":
+            print("\n\nStarting Calibration: Thermocycler Plate")
+            plateTC_x, plateTC_y, plateTC_z = calibrate_tc(plateTC,left_pipette)
+            plateTC.set_offset(x=plateTC_x, y=plateTC_y, z=plateTC_z)
+
+            print("\n\nStarting Calibration: Plates")
+            rnaPlate_x, rnaPlate_y, rnaPlate_z = calibrate(rnaPlate,left_pipette)
+            rnaPlate.set_offset(x=rnaPlate_x, y=rnaPlate_y, z=rnaPlate_z)
+            distributePlate.set_offset(x=rnaPlate_x, y=rnaPlate_y, z=rnaPlate_z)
+            
+            print("\n\nStarting Calibration: Tubes")
+            tubes_x, tubes_y, tubes_z = calibrate(tubes,right_pipette)
+            tubes.set_offset(x=tubes_x, y=tubes_y, z=tubes_z)
+
+            print("\n\nStarting Calibration: Conicals")
+            conicals_x, conicals_y, conicals_z = calibrate(conicals,right_pipette)
+            conicals.set_offset(x=conicals_x, y=conicals_y, z=conicals_z)
+
+            print("--Calibration Complete-- \n\n")
+
+            protocol.home()
 #Asking user where to start from, for errors, pauses, and testing.
     print("--------------------------------------------------------Stage Selection--------------------------------------------------------------------")
     print("Stage 1: Set Initial Thermocycler Temperature")
@@ -192,12 +442,12 @@ def run(protocol: protocol_api.ProtocolContext):
     print("Stage 12: Standard Curve Consolidate")
     print("Stage 13: Standard Curve Add Water to Empty Standard Curve")
     print("Stage 14: Standard Curve Dilution Series")
-    print("Stage 15:Standard Curve Final Well Halving")
+    print("Stage 15: Standard Curve Final Well Halving")
     print("Stage 16: Standard Curve Add Water to Samples")
     print("Stage 17: Standard Curve Add Water to Full Standard Curve")
     print("Stage 18: Thermocycler End Hold ")
     print("--------------------------------------------------------Stage Selection--------------------------------------------------------------------")
-    stage = input("From what stage of the protocol would you like to start? Choose an int<=18. ENTER to start at the beginning.")
+    stage = input("From what stage of the protocol would you like to start? Choose an int<=18. [ENTER] to start at the beginning:")
     if (stage == ""):
         print("Default, starting from Stage 1")
         stage = 1
@@ -207,7 +457,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 #Calculations
-
+        
 #These function calls will create lists for all the locations of pipetting on the 96 well plates.
 #Examples of the lists are given below for 20 samples with a 12 point standard curve dilution series.
 
@@ -224,6 +474,7 @@ def run(protocol: protocol_api.ProtocolContext):
     stCurveEnd = stCurveStart+stCurve-1
     stCurveVol = stCurvePortion*len(sampleWells)
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        
 #Protocol Start
     print("------------------------------------------------------------------------------------------!!Starting Protocol!!--------------------------------------------------------------------------------------")
     startTime = time.time()
@@ -237,14 +488,13 @@ def run(protocol: protocol_api.ProtocolContext):
 #Transfer RNA from RNA plate to plate in Thermocycler
     if (stage<=2):
         print("----------------------------------------------------------------------------------------!Starting Stage 2!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.aspirate = 2
-        right_pipette.well_bottom_clearance.dispense = 1.5
-
         for column in sampleColumns:
+            change_speed(50)
             left_pipette.pick_up_tip()
             left_pipette.aspirate(10, rnaPlate[column])
             left_pipette.dispense(8, plateTC[column])
-            protocol.delay(seconds = 1)
+            change_speed(10)
+            protocol.delay(seconds = 2)
             left_pipette.drop_tip()
 
         reset_defaults()
@@ -252,6 +502,7 @@ def run(protocol: protocol_api.ProtocolContext):
     if (stage<=3):
         print("----------------------------------------------------------------------------------------!Starting Stage 3!----------------------------------------------------------------------------------------")
         change_speed(50)
+        right_pipette.well_bottom_clearance.aspirate = 0.3
         right_pipette.pick_up_tip()
         right_pipette.aspirate(250, tubes["A2"])
         protocol.delay(seconds = 1)
@@ -265,18 +516,23 @@ def run(protocol: protocol_api.ProtocolContext):
 #Spread out dNTPs and random hexamers on Distribute Plate add dNTPs and random hexamers to RNA in Thermocycler Plate
     if (stage<=4):
         print("----------------------------------------------------------------------------------------!Starting Stage 4!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.dispense = 2
-        change_speed(50)
-        right_pipette.distribute(10, [tubes["A1"]], [distributePlate.wells()[0:len(sampleWells)]], disposal_volume = 10, rate=(10/92.86))
-        left_pipette.well_bottom_clearance.aspirate = 1.5
-        left_pipette.well_bottom_clearance.dispense = 2.75
         change_speed(10)
+        right_pipette.well_bottom_clearance.aspirate = 0.3
+        right_pipette.well_bottom_clearance.dispense = 0.5
+        right_pipette.pick_up_tip()
+        right_pipette.aspirate((len(sampleWells)*10+10), tubes["A1"])
+        
+        for well in sampleWells:
+            right_pipette.dispense(10, distributePlate[well], rate=(10/92.86))
+            protocol.delay(seconds = 2)
+        right_pipette.drop_tip()
 
         for column in sampleColumns:
             left_pipette.pick_up_tip()
-            left_pipette.aspirate(5, distributePlate[column], rate=(3/7.6))
+            left_pipette.aspirate(4, distributePlate[column], rate=(3/7.6))
+            protocol.delay(seconds = 2)
             left_pipette.dispense(2, plateTC[column] , rate=(2/7.6))
-            protocol.delay(seconds = 1)
+            protocol.delay(seconds = 2)
             left_pipette.drop_tip()
 
         reset_defaults()
@@ -290,7 +546,9 @@ def run(protocol: protocol_api.ProtocolContext):
 #Combine cDNA synthesis mix into SSIII tube
     if (stage<=6):
         print("----------------------------------------------------------------------------------------!Starting Stage 6!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.dispense = 3
+        change_speed(50)
+        right_pipette.well_bottom_clearance.dispense = 2
+        right_pipette.well_bottom_clearance.aspirate = 1
         right_pipette.pick_up_tip()
         right_pipette.aspirate(100, tubes["B1"])
         right_pipette.dispense(100, tubes["B5"])
@@ -306,8 +564,8 @@ def run(protocol: protocol_api.ProtocolContext):
 #Distribute cDNA synthesis mix to Thermocycler Plate
     if (stage<=7):
         print("----------------------------------------------------------------------------------------!Starting Stage 7!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.dispense = 2.9
         change_speed(10)
+        right_pipette.well_bottom_clearance.aspirate = 0.75
         right_pipette.distribute(10, [tubes["B5"]], [plateTC.wells()[0:len(sampleWells)]], disposal_volume = 20, rate=(10/92.86))
         reset_defaults()
 #Thermocycler creates cDNA by
@@ -326,27 +584,25 @@ def run(protocol: protocol_api.ProtocolContext):
 #Dilute RNase H and Distribute RNase H on Distribute Plate
     if (stage<=9):
         print("----------------------------------------------------------------------------------------!Starting Stage 9!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.dispense = 3
+        right_pipette.well_bottom_clearance.aspirate = 0.5
+        right_pipette.well_bottom_clearance.dispense = 0.25
         right_pipette.pick_up_tip()
         right_pipette.aspirate(100, conicals["A1"])
         right_pipette.dispense(100, tubes["C1"])
         mix_r(200,100,20)
         right_pipette.drop_tip()
         change_speed(10)
-        right_pipette.well_bottom_clearance.dispense = 0.5
         right_pipette.distribute(17, tubes["C1"], distributePlate.columns()[11], disposal_volume = 10, rate = 10/92.86)
         reset_defaults()
 #Add RNase H to Thermocycler Plate
     if (stage<=10):
         print("----------------------------------------------------------------------------------------!Starting Stage 10!----------------------------------------------------------------------------------------")
-        left_pipette.well_bottom_clearance.aspirate = 0.6
         change_speed(10)
 
         left_pipette.pick_up_tip()
-        left_pipette.aspirate(14, distributePlate["A12"], rate=(10/7.6))
+        left_pipette.aspirate((len(sampleColumns)*2+2), distributePlate["A12"], rate=(10/7.6))
         protocol.delay(seconds = 2)
 
-        left_pipette.well_bottom_clearance.dispense = 4
         for column in sampleColumns:
             left_pipette.dispense(2, plateTC[column], rate=(2/7.6))
             protocol.delay(seconds = 2)
@@ -366,8 +622,6 @@ def run(protocol: protocol_api.ProtocolContext):
 ##Volume in the StandardCurveStart Well = (6*samples) or (stCurvePortion*samples)
     if (stage<=12):
         print("----------------------------------------------------------------------------------------!Starting Stage 12!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.aspirate = 2.3
-        right_pipette.well_bottom_clearance.dispense = 2.3
         change_speed(10)
 
         right_pipette.pick_up_tip()
@@ -376,22 +630,18 @@ def run(protocol: protocol_api.ProtocolContext):
         right_pipette.dispense((stCurveVol), plateTC.wells()[stCurveStart], rate=(48/92.86))
         mix_r_s(60,6,60,60)
         right_pipette.drop_tip()
-
+        
         reset_defaults()
 #Standard Curve Add Water to Empty Standard Curve
 ##If the volume in the StandardCurveStart Well is stCurveVol, then
 ##The volume of water needed for each 2 fold dilution is stCurveVol/2
     if (stage<=13):
         print("----------------------------------------------------------------------------------------!Starting Stage 13!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.aspirate = 2
-        right_pipette.well_bottom_clearance.dispense = 3.5
         right_pipette.distribute((stCurveVol/2), [conicals["A1"]], [plateTC.wells()[(stCurveStart+1):(stCurveEnd+1)]], disposal_volume = 20)
         reset_defaults()
 #Standard Curve Dilution Series
     if (stage<=14):
         print("----------------------------------------------------------------------------------------!Starting Stage 14!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.aspirate = 2.5
-        right_pipette.well_bottom_clearance.dispense = 2.5
         change_speed(10)
 
         for a in range(0,2):
@@ -419,20 +669,15 @@ def run(protocol: protocol_api.ProtocolContext):
         right_pipette.pick_up_tip()
         right_pipette.aspirate((stCurveVol/2), plateTC.wells()[stCurveEnd], rate = (30/92.86))
         right_pipette.drop_tip()
-
         reset_defaults()
 #Standard Curve Add Water to Samples
     if (stage<=16):
         print("----------------------------------------------------------------------------------------!Starting Stage 16!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.aspirate = 2
-        right_pipette.well_bottom_clearance.dispense = 3.5
         right_pipette.distribute(((22-stCurvePortion)*5), [conicals["A1"]], [plateTC.wells()[0:len(sampleWells)]], disposal_volume = 20)
         reset_defaults()
 #Standard Curve Add Water to Full Standard Curve
     if (stage<=17):
         print("----------------------------------------------------------------------------------------!Starting Stage 17!----------------------------------------------------------------------------------------")
-        right_pipette.well_bottom_clearance.aspirate = 2
-        right_pipette.well_bottom_clearance.dispense = 4.8
         change_speed(50)
         right_pipette.distribute((stCurveVol/2), [conicals["A1"]], plateTC.wells()[stCurveStart:stCurveEnd+1], disposal_volume = 20)
         reset_defaults()
@@ -442,7 +687,8 @@ def run(protocol: protocol_api.ProtocolContext):
         thermo.close_lid()
         thermo.set_block_temperature(temperature=4)
         thermo.set_lid_temperature(40)
-    print("------------------------------------------------------------------------------------------!!End Of Protocol!!--------------------------------------------------------------------------------------")
+    print("------------------------------------------------------------------------------------------!!End Of Protocol!!--------------------------------------------------------------------------------------")    
+#Protocol prints time it took to complete. 
     endTime = time.time()
     runTime = endTime-startTime
     hours = runTime//(60*60)
