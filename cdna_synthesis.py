@@ -97,6 +97,22 @@ def run(protocol: protocol_api.ProtocolContext):
             right_pipette.aspirate(vol, rate = (speedA/92.86))
             right_pipette.dispense(vol, rate = (speedD/92.86))
 
+    def human_mix_r(vol,x):
+        mixvol = int(vol)
+        for a in range(5,mixvol,15):
+            right_pipette.aspirate(mixvol, rate = (a/92.86))
+            right_pipette.dispense(mixvol, rate = ((a+5)/92.86))
+        protocol.delay(seconds = 1.5)
+        for i in range(0,x):
+            right_pipette.aspirate(mixvol, rate = (500/92.86))
+            protocol.delay(seconds = 0.5)
+            right_pipette.dispense(mixvol, rate = (500/92.86))
+        protocol.delay(seconds = 1.5)
+        for d in range(mixvol,5,-15):
+            right_pipette.aspirate(mixvol, rate = (d/92.86))
+            right_pipette.dispense(mixvol, rate = ((d-5)/92.86))
+        protocol.delay(seconds = 1.5)
+            
 #mix_l mixes with the p20 8-channel pipette while already in a column of wells, the command prior should dispense.
 #It takes 3 parameters, the speed of mixing, the volume aspirated and dispensed each cycle, and how many times to mix.
     def mix_l(speed,vol,x):
@@ -351,10 +367,10 @@ def run(protocol: protocol_api.ProtocolContext):
     rnaPlate = protocol.load_labware('nest_96_wellplate_100ul_pcr_full_skirt', 9)
     distributePlate = protocol.load_labware('nest_96_wellplate_100ul_pcr_full_skirt', 5)
 
-    plateTC.set_offset(-0.3,0.8,0.3)
-    rnaPlate.set_offset(-0.3,0.8,0.3)
-    distributePlate.set_offset(-0.3,0.8,0.3)
-    tubes.set_offset(0.2,0.3,0.46)
+    plateTC.set_offset(-0.3,0.81,0.3)
+    rnaPlate.set_offset(-0.3,0.81,0.3)
+    distributePlate.set_offset(-0.3,0.81,0.3)
+    tubes.set_offset(0.2,0.31,0.46)
     conicals.set_offset(-0.3,0.5,0.16)
     
 #To access a specific well, enter a string as a dictionary key, ie. plate["B7"].
@@ -439,15 +455,16 @@ def run(protocol: protocol_api.ProtocolContext):
     print("Stage 9: Distribute RNase H on Distribute Plate")
     print("Stage 10: Add RNase H to Thermocycler Plate")
     print("Stage 11: Thermocycler hold at 37C for 20 minutes to allow RNase H to digest the free RNA. Cool to 4C to tangle cDNA preventing further enzymatic activity.")
-    print("Stage 12: Standard Curve Consolidate")
-    print("Stage 13: Standard Curve Add Water to Empty Standard Curve")
-    print("Stage 14: Standard Curve Dilution Series")
-    print("Stage 15: Standard Curve Final Well Halving")
-    print("Stage 16: Standard Curve Add Water to Samples")
-    print("Stage 17: Standard Curve Add Water to Full Standard Curve")
+    print("Stage 12: Standard Curve Mixing Samples")
+    print("Stage 13: Standard Curve Consolidate")
+    print("Stage 14: Standard Curve Add Water to Empty Standard Curve")
+    print("Stage 15: Standard Curve Dilution Series")
+    print("Stage 16: Standard Curve Final Well Halving")
+    print("Stage 17: Standard Curve Add Water to Samples and mix")
     print("Stage 18: Thermocycler End Hold ")
     print("--------------------------------------------------------Stage Selection--------------------------------------------------------------------")
-    stage = input("From what stage of the protocol would you like to start? Choose an int<=18. [ENTER] to start at the beginning:")
+    print("From what stage of the protocol would you like to start?")
+    stage = input("Choose an int<=18.[ENTER] to start at the beginning:")
     if (stage == ""):
         print("Default, starting from Stage 1")
         stage = 1
@@ -617,38 +634,56 @@ def run(protocol: protocol_api.ProtocolContext):
         thermo.set_block_temperature(temperature=4)
         thermo.set_lid_temperature(40)
         thermo.open_lid()
+
+#Standard Curve Mixing Samples
+    if (stage<=12):
+        print("----------------------------------------------------------------------------------------!Starting Stage 12!----------------------------------------------------------------------------------------")
+        right_pipette.well_bottom_clearance.aspirate = 0.2
+        right_pipette.well_bottom_clearance.dispense = 0.2
+        for column in sampleColumns:
+            left_pipette.pick_up_tip()
+            left_pipette.aspirate(15, plateTC[column])
+            left_pipette.dispense(15, plateTC[column])
+            mix_l(7.6, 15, 20)
+            left_pipette.drop_tip()
+
+        reset_defaults()
 #Standard Curve Consolidate
 ##Standard Curve takes 6ul or amount chosen from each sample, Therefore
 ##Volume in the StandardCurveStart Well = (6*samples) or (stCurvePortion*samples)
-    if (stage<=12):
-        print("----------------------------------------------------------------------------------------!Starting Stage 12!----------------------------------------------------------------------------------------")
+    if (stage<=13):
+        print("----------------------------------------------------------------------------------------!Starting Stage 13!----------------------------------------------------------------------------------------")
         change_speed(10)
-
+        right_pipette.well_bottom_clearance.aspirate = 0.2
+        right_pipette.well_bottom_clearance.dispense = 0.2
         right_pipette.pick_up_tip()
         for well in sampleWells:
             right_pipette.aspirate(stCurvePortion, plateTC[well], rate=(6/92.86))
         right_pipette.dispense((stCurveVol), plateTC.wells()[stCurveStart], rate=(48/92.86))
-        mix_r_s(60,6,60,60)
+        human_mix_r((stCurveVol/2),40)
         right_pipette.drop_tip()
-        
         reset_defaults()
 #Standard Curve Add Water to Empty Standard Curve
 ##If the volume in the StandardCurveStart Well is stCurveVol, then
 ##The volume of water needed for each 2 fold dilution is stCurveVol/2
-    if (stage<=13):
-        print("----------------------------------------------------------------------------------------!Starting Stage 13!----------------------------------------------------------------------------------------")
-        right_pipette.distribute((stCurveVol/2), [conicals["A1"]], [plateTC.wells()[(stCurveStart+1):(stCurveEnd+1)]], disposal_volume = 20)
-        reset_defaults()
-#Standard Curve Dilution Series
     if (stage<=14):
         print("----------------------------------------------------------------------------------------!Starting Stage 14!----------------------------------------------------------------------------------------")
         change_speed(10)
-
+        right_pipette.well_bottom_clearance.dispense = 0.5
+        right_pipette.distribute((stCurveVol/2), [conicals["A1"]], [plateTC.wells()[(stCurveStart+1):(stCurveEnd+1)]], disposal_volume = 20)
+        reset_defaults()
+#Standard Curve Dilution Series
+    if (stage<=15):
+        print("----------------------------------------------------------------------------------------!Starting Stage 15!----------------------------------------------------------------------------------------")
+        change_speed(10)
+        right_pipette.well_bottom_clearance.aspirate = 0.5
+        right_pipette.well_bottom_clearance.dispense = 0.5
+        
         for a in range(0,2):
             right_pipette.pick_up_tip()
             right_pipette.aspirate((stCurveVol/2), plateTC.wells()[stCurveStart+a], rate = (30/92.86))
             right_pipette.dispense((stCurveVol/2), plateTC.wells()[stCurveStart+a+1], rate = (6/92.86))
-            mix_r_s(60,6,60,60)
+            human_mix_r((stCurveVol/2),20)
             change_speed(1)
             right_pipette.move_to(plateTC.wells()[stCurveStart+a+1].bottom(20))
             change_speed(10)
@@ -659,27 +694,30 @@ def run(protocol: protocol_api.ProtocolContext):
             right_pipette.pick_up_tip()
             right_pipette.aspirate((stCurveVol/2), plateTC.wells()[b], rate = (30/92.86))
             right_pipette.dispense((stCurveVol/2), plateTC.wells()[b+1], rate = (6/92.86))
-            mix_r(120,60,60)
+            human_mix_r((stCurveVol/2),15)
             right_pipette.drop_tip()
 
         reset_defaults()
 #Standard Curve Final Well Halving
-    if (stage<=15):
-        print("----------------------------------------------------------------------------------------!Starting Stage 15!----------------------------------------------------------------------------------------")
+    if (stage<=16):
+        print("----------------------------------------------------------------------------------------!Starting Stage 16!----------------------------------------------------------------------------------------")
+        right_pipette.well_bottom_clearance.aspirate = 0.5
+        right_pipette.well_bottom_clearance.dispense = 0.5
         right_pipette.pick_up_tip()
         right_pipette.aspirate((stCurveVol/2), plateTC.wells()[stCurveEnd], rate = (30/92.86))
         right_pipette.drop_tip()
         reset_defaults()
-#Standard Curve Add Water to Samples
-    if (stage<=16):
-        print("----------------------------------------------------------------------------------------!Starting Stage 16!----------------------------------------------------------------------------------------")
-        right_pipette.distribute(((22-stCurvePortion)*5), [conicals["A1"]], [plateTC.wells()[0:len(sampleWells)]], disposal_volume = 20)
-        reset_defaults()
-#Standard Curve Add Water to Full Standard Curve
+#Standard Curve Add Water to Samples and mix
     if (stage<=17):
         print("----------------------------------------------------------------------------------------!Starting Stage 17!----------------------------------------------------------------------------------------")
-        change_speed(50)
-        right_pipette.distribute((stCurveVol/2), [conicals["A1"]], plateTC.wells()[stCurveStart:stCurveEnd+1], disposal_volume = 20)
+        right_pipette.well_bottom_clearance.aspirate = 0.5
+        right_pipette.well_bottom_clearance.dispense = 0.5
+        for well in sampleWells:
+            right_pipette.pick_up_tip()
+            right_pipette.aspirate(((22-stCurvePortion)*4), conicals["A1"])
+            right_pipette.dispense(((22-stCurvePortion)*4), plateTC[well])
+            human_mix_r(((22-stCurvePortion)*4),10)
+            right_pipette.drop_tip()
         reset_defaults()
 #Thermocycler End Hold
     if (stage<=18):

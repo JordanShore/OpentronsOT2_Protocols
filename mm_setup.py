@@ -234,10 +234,10 @@ def run(protocol: protocol_api.ProtocolContext):
     right_pipette = protocol.load_instrument('p300_single_gen2', 'right', tip_racks=[tipsL])
     left_pipette = protocol.load_instrument('p20_multi_gen2', 'left')
 
-    distributePlate.set_offset(0,0.2,0)
-    primers.set_offset(0.3,0.4,1.2)
-    mmTubes.set_offset(0.3,0.4,1.2)
-    conicals.set_offset(0,0.2,0.3)
+    distributePlate.set_offset(0.0,0.0,0.1)
+    primers.set_offset(0.7,1,1.9)
+    mmTubes.set_offset(0.0,0.5,1.1)
+    conicals.set_offset(0,0.2,1)
 
    
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -273,10 +273,13 @@ def run(protocol: protocol_api.ProtocolContext):
             distributePlate_x, distributePlate_y, distributePlate_z = calibrate(distributePlate,right_pipette)
             distributePlate.set_offset(x=distributePlate_x, y=distributePlate_y, z=distributePlate_z)
             
-            print("\n\nStarting Calibration: Tubes")
+            print("\n\nStarting Calibration: Primers")
             primers_x, primers_y, primers_z = calibrate(primers,right_pipette)
             primers.set_offset(x=primers_x, y=primers_y, z=primers_z)
-            mmTubes.set_offset(x=primers_x, y=primers_y, z=primers_z)
+
+            print("\n\nStarting Calibration: mmTubes")
+            mmTubes_x, mmTubes_y, mmTubes_z = calibrate(mmTubes,right_pipette)
+            mmTubes.set_offset(x=mmTubes_x, y=mmTubes_y, z=mmTubes_z)
 
             print("\n\nStarting Calibration: Conicals")
             conicals_x, conicals_y, conicals_z = calibrate(conicals,right_pipette)
@@ -415,11 +418,11 @@ def run(protocol: protocol_api.ProtocolContext):
 #Later we will index the list using a range with calculations, which is why we need the buffer. See Stage 3 for details.
     if (stage<=1) and (primerCouples>=1):
         print("--------------------------------------------------------------------------!Starting Stage 1!----------------------------------------------------------------------------------------")
+        right_pipette.well_bottom_clearance.dispense = 1
         right_pipette.pick_up_tip()
         for well in primerMasterMixWells[1:]:
             right_pipette.transfer(SYBR_Green_Vol, conicals["A4"], mmTubes[well], new_tip = "never")
         right_pipette.drop_tip()
-        reset_defaults()
 #Add water to the Master Mix Tubes. Similar to what was just done with SYBR Green.
     if (stage<=2) and (primerCouples>=1):
         print("--------------------------------------------------------------------------!Starting Stage 2!----------------------------------------------------------------------------------------")
@@ -459,9 +462,11 @@ def run(protocol: protocol_api.ProtocolContext):
 #These equations are also the reason why both lists start with 'Buffer' and the FOR loop starts at 1 instead of 0.
 #Indexing 0 doesn't work because you still get 0 when you multiply it by 2. You'd start with [i=0 y=-1 x=0], not what you want.
 
-
+        
 #Add F/R primers to mmTubes and mix.
         for i in range(1,primerCouples+1):
+            right_pipette.well_bottom_clearance.aspirate = 1.4
+            right_pipette.well_bottom_clearance.dispense = 1.4
             right_pipette.pick_up_tip()
             right_pipette.aspirate(primerVol,primers[primerCoupleWells[(2*i-1)]])
             right_pipette.dispense(primerVol,mmTubes[primerMasterMixWells[i]])
@@ -477,12 +482,14 @@ def run(protocol: protocol_api.ProtocolContext):
                 right_pipette.dispense(300,mmTubes[primerMasterMixWells[i]], rate = 1000/92.86)
 
             right_pipette.drop_tip()
-        reset_defaults()
+            reset_defaults()
 #Distribute Master Mixes to Master Mix Plate.
     if (stage<=4) and (primerCouples>=1):
         print("--------------------------------------------------------------------------!Starting Stage 4!----------------------------------------------------------------------------------------")
+        right_pipette.well_bottom_clearance.aspirate = 0.7
         for i in range(1,primerCouples+1):
             right_pipette.distribute(distributeVol, mmTubes[primerMasterMixWells[i]], [distributePlate.columns()[i-1]], disposal_volume = 0)
+            
         reset_defaults()
 
 #Add SyberGreen for repeat primer couples to the 15ml Conicals.
@@ -498,7 +505,6 @@ def run(protocol: protocol_api.ProtocolContext):
             right_pipette.transfer(SYBR_Green_Vol*repeatsList[i],conicals["A4"],conicals[repeatConicalWells[i+1]], new_tip = "never")
         right_pipette.drop_tip()
 
-        reset_defaults()
 #Add Water for repeat primer couples to the 15ml Conicals.
     if (stage<=6) and (repeatPrimers>=1):
         print("--------------------------------------------------------------------------!Starting Stage 6!----------------------------------------------------------------------------------------")
